@@ -1,13 +1,53 @@
 using Microsoft.EntityFrameworkCore;
 using RoomManagerAPI.Data;
 using RoomManagerAPI.Models;
+using RoomManagerAPI.Services;
+using Microsoft.IdentityModel.Tokens;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite("Data Source=salas.db"));
 
+builder.Services.AddAuthentication()
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new()
+        {
+            ValidateIssuerSigningKey = true,
+
+            IssuerSigningKey = new SymmetricSecurityKey(
+                System.Text.Encoding.UTF8.GetBytes(
+                    "minha-chave-super-secreta-123456"
+                )
+            ),
+
+            ValidateIssuer = false,
+            ValidateAudience = false
+        };
+    });
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("Frontend", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
+
+builder.Services.AddAuthorization();
+
+builder.Services.AddSingleton<TokenService>();
+
 var app = builder.Build();
+
+app.UseCors("Frontend");
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 using (var scope = app.Services.CreateScope())
 {
@@ -19,6 +59,25 @@ using (var scope = app.Services.CreateScope())
 app.MapGet("/salas", async (AppDbContext db) =>
 {
     return await db.SalasReuniao.ToListAsync();
+}).RequireAuthorization();
+
+app.MapPost("/login", (
+    LoginRequest login,
+    TokenService tokenService
+) =>
+{
+    if(login.Email == "teste@teste.com" 
+       && login.Senha == "123")
+    {
+        var token = tokenService.GerarToken();
+
+        return Results.Ok(new
+        {
+            token
+        });
+    }
+
+    return Results.Unauthorized();
 });
 
 app.MapPost("/salas", async (
@@ -31,7 +90,7 @@ app.MapPost("/salas", async (
     await db.SaveChangesAsync();
 
     return Results.Created($"/salas/{sala.Id}", sala);
-});
+}).RequireAuthorization();
 
 app.MapPut("/salas/{id}", async (
     int id,
@@ -53,7 +112,7 @@ app.MapPut("/salas/{id}", async (
     await db.SaveChangesAsync();
 
     return Results.Ok(salaExistente);
-});
+}).RequireAuthorization();
 
 app.MapDelete("/salas/{id}", async (
     int id,
@@ -72,6 +131,6 @@ app.MapDelete("/salas/{id}", async (
     await db.SaveChangesAsync();
 
     return Results.NoContent();
-});
+}).RequireAuthorization();
 
 app.Run();
